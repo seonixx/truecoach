@@ -163,3 +163,40 @@ func (c *Client) GetHabitTrackers(authToken string, clientID string, date string
 	}
 	return &wrapper.Response, nil
 }
+
+// HabitTrackingUpdateInput is the payload for updating a habit tracker entry for a day.
+// Date is required; other fields are optional and only sent when set (omitempty).
+type HabitTrackingUpdateInput struct {
+	Date   string   `json:"date"`
+	Steps  *int     `json:"steps,omitempty"`
+	Weight *float64 `json:"weight,omitempty"`
+	// Optional fields the API may accept:
+	Calories *float64 `json:"calories,omitempty"`
+	Protein  *float64 `json:"protein,omitempty"`
+	Carbs    *float64 `json:"carbs,omitempty"`
+	Fat      *float64 `json:"fat,omitempty"`
+	Sleep    *float64 `json:"sleep,omitempty"`
+	Energy   *float64 `json:"energy,omitempty"`
+	Hunger   *float64 `json:"hunger,omitempty"`
+	Stress   *float64 `json:"stress,omitempty"`
+	Notes    *string  `json:"notes,omitempty"`
+}
+
+// UpdateHabitTracker updates the habit tracker entry for the given client and tracking ID.
+// The date in input should be in the format the API expects, e.g. "Feb 1, 2026".
+// Returns the updated habit tracker (response uses date format "2006-01-02").
+func (c *Client) UpdateHabitTracker(authToken string, clientID string, trackingID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
+	body := struct {
+		HabitTracking HabitTrackingUpdateInput `json:"habit_tracking"`
+	}{HabitTracking: input}
+	var out HabitTrackerTracking
+	_, err := c.httpClient.R().
+		SetHeader("Authorization", "Bearer "+authToken).
+		SetBody(body).
+		SetResult(&out).
+		Put("/clients/" + clientID + "/habit_trackers/" + trackingID)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
