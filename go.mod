@@ -1,4 +1,4 @@
-module truecoach
+module github.com/seonixx/truecoach
 
 go 1.24.3
 

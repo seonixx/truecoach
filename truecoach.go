@@ -4,9 +4,65 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"resty.dev/v3"
 )
+
+const (
+	// dateAPIFormat is the format the API expects in request parameters (e.g. "Apr 19, 2026").
+	dateAPIFormat = "Jan 2, 2006"
+	// dateISOFormat is the format the API returns in responses (e.g. "2026-04-19").
+	dateISOFormat = "2006-01-02"
+)
+
+// Date wraps time.Time for TrueCoach API date fields.
+// It marshals to the API request format ("Jan 2, 2006") and
+// unmarshals from either the response format ("2006-01-02") or request format.
+type Date struct {
+	time.Time
+}
+
+// NewDate creates a Date from a time.Time, discarding the time component.
+func NewDate(t time.Time) Date {
+	y, m, d := t.Date()
+	return Date{time.Date(y, m, d, 0, 0, 0, 0, t.Location())}
+}
+
+// Today returns today's date.
+func Today() Date {
+	return NewDate(time.Now())
+}
+
+// ParseDate parses a date string in either "Jan 2, 2006" or "2006-01-02" format.
+func ParseDate(s string) (Date, error) {
+	for _, layout := range []string{dateAPIFormat, dateISOFormat} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return Date{t}, nil
+		}
+	}
+	return Date{}, fmt.Errorf("cannot parse date %q (expected %q or %q)", s, dateAPIFormat, dateISOFormat)
+}
+
+func (d Date) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Format(dateAPIFormat))
+}
+
+func (d *Date) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	parsed, err := ParseDate(s)
+	if err != nil {
+		return err
+	}
+	*d = parsed
+	return nil
+}
+
+// String returns the date in API request format ("Jan 2, 2006").
+func (d Date) String() string { return d.Format(dateAPIFormat) }
 
 const (
 	apiBaseURL     = "https://api.truecoach.co/api"
@@ -22,8 +78,15 @@ type Client struct {
 	httpClient *resty.Client
 }
 
+// checkStatus returns an error if the HTTP response indicates failure.
+func checkStatus(res *resty.Response) error {
+	if res.IsSuccess() {
+		return nil
+	}
+	return fmt.Errorf("API error %d: %s", res.StatusCode(), res.String())
+}
+
 // NewClient returns a new TrueCoach API client with standard request headers set.
-// Call SetAccessToken after Login to use authenticated endpoints.
 func NewClient() *Client {
 	return &Client{
 		httpClient: resty.New().
@@ -42,7 +105,7 @@ type ClientID string
 
 // UnmarshalJSON accepts either a JSON number or string for the client ID.
 func (c *ClientID) UnmarshalJSON(data []byte) error {
-	var v interface{}
+	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -67,20 +130,22 @@ type TokenResponse struct {
 }
 
 func (c *Client) Login(email, password string) (*TokenResponse, error) {
+	var out TokenResponse
 	res, err := c.httpClient.R().
 		SetBody(map[string]string{
 			"grant_type": "password",
 			"username":   email,
 			"password":   password,
 		}).
-		SetResult(&TokenResponse{}).
+		SetResult(&out).
 		Post("/oauth/token")
-
 	if err != nil {
 		return nil, err
 	}
-
-	return res.Result().(*TokenResponse), nil
+	if err := checkStatus(res); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // UserProfile is the "user" object returned by the user profile endpoint.
@@ -108,11 +173,14 @@ type UserProfileResponse struct {
 // Use the ClientID from the response (profile.User.ClientID) for client-scoped endpoints like habit trackers.
 func (c *Client) GetUserProfile(authToken string, userID string) (*UserProfileResponse, error) {
 	var out UserProfileResponse
-	_, err := c.httpClient.R().
+	res, err := c.httpClient.R().
 		SetHeader("Authorization", "Bearer "+authToken).
 		SetResult(&out).
 		Get("/users/" + userID)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(res); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -122,7 +190,7 @@ func (c *Client) GetUserProfile(authToken string, userID string) (*UserProfileRe
 type HabitTrackerTracking struct {
 	ID        int      `json:"id"`
 	Calories  *float64 `json:"calories"`
-	Date      string   `json:"date"`
+	Date      Date     `json:"date"`
 	Protein   *float64 `json:"protein"`
 	Carbs     *float64 `json:"carbs"`
 	Fat       *float64 `json:"fat"`
@@ -141,24 +209,26 @@ type HabitTrackerTracking struct {
 // HabitTrackerResponse is the response from the habit_trackers endpoint.
 type HabitTrackerResponse struct {
 	Trackings        []HabitTrackerTracking `json:"trackings"`
-	PreviousDuration map[string]interface{} `json:"previous_duration"`
-	NextDuration     map[string]interface{} `json:"next_duration"`
-	CurrentDuration  map[string]interface{} `json:"current_duration"`
+	PreviousDuration map[string]any `json:"previous_duration"`
+	NextDuration     map[string]any `json:"next_duration"`
+	CurrentDuration  map[string]any `json:"current_duration"`
 	IsPrevious       bool                   `json:"is_previous"`
 }
 
 // GetHabitTrackers fetches habit tracker information for a client for the given date.
-// The date should be in a format the API expects, e.g. "Feb 1, 2026".
-func (c *Client) GetHabitTrackers(authToken string, clientID string, date string) (*HabitTrackerResponse, error) {
+func (c *Client) GetHabitTrackers(authToken string, clientID string, date Date) (*HabitTrackerResponse, error) {
 	var wrapper struct {
 		Response HabitTrackerResponse `json:"response"`
 	}
-	_, err := c.httpClient.R().
-		SetQueryParam("date", date).
+	res, err := c.httpClient.R().
+		SetQueryParam("date", date.String()).
 		SetHeader("Authorization", "Bearer "+authToken).
 		SetResult(&wrapper).
 		Get("/clients/" + clientID + "/habit_trackers")
 	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(res); err != nil {
 		return nil, err
 	}
 	return &wrapper.Response, nil
@@ -167,7 +237,7 @@ func (c *Client) GetHabitTrackers(authToken string, clientID string, date string
 // HabitTrackingUpdateInput is the payload for updating a habit tracker entry for a day.
 // Date is required; other fields are optional and only sent when set (omitempty).
 type HabitTrackingUpdateInput struct {
-	Date   string   `json:"date"`
+	Date   Date     `json:"date"`
 	Steps  *int     `json:"steps,omitempty"`
 	Weight *float64 `json:"weight,omitempty"`
 	// Optional fields the API may accept:
@@ -183,19 +253,20 @@ type HabitTrackingUpdateInput struct {
 }
 
 // UpdateHabitTracker updates the habit tracker entry for the given client and tracking ID.
-// The date in input should be in the format the API expects, e.g. "Feb 1, 2026".
-// Returns the updated habit tracker (response uses date format "2006-01-02").
 func (c *Client) UpdateHabitTracker(authToken string, clientID string, trackingID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
 	body := struct {
 		HabitTracking HabitTrackingUpdateInput `json:"habit_tracking"`
 	}{HabitTracking: input}
 	var out HabitTrackerTracking
-	_, err := c.httpClient.R().
+	res, err := c.httpClient.R().
 		SetHeader("Authorization", "Bearer "+authToken).
 		SetBody(body).
 		SetResult(&out).
 		Put("/clients/" + clientID + "/habit_trackers/" + trackingID)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(res); err != nil {
 		return nil, err
 	}
 	return &out, nil
