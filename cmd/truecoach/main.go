@@ -8,7 +8,7 @@
 //
 //	truecoach profile
 //	truecoach habits
-//	truecoach update-habit -id 123 -steps 10000
+//	truecoach upsert-habit -id 123 -steps 10000
 package main
 
 import (
@@ -71,7 +71,7 @@ Commands:
   login          Authenticate and store credentials
   profile        Fetch and display the user profile
   habits         Fetch habit tracker entries for a date
-  update-habit   Update a habit tracker entry
+  upsert-habit   Write habit tracker values for a day (creates or updates)
 
 Credentials are stored in ~/%s/%s after login.
 `, configDir, configFile)
@@ -91,8 +91,8 @@ func main() {
 		cmdProfile()
 	case "habits":
 		cmdHabits()
-	case "update-habit":
-		cmdUpdateHabit()
+	case "upsert-habit":
+		cmdUpsertHabit()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		usage()
@@ -183,9 +183,9 @@ func cmdHabits() {
 	printJSON(habits)
 }
 
-// update-habit updates a single habit tracker entry.
-func cmdUpdateHabit() {
-	fs := flag.NewFlagSet("update-habit", flag.ExitOnError)
+// upsert-habit writes habit tracker values for a day, creating the entry if it doesn't exist.
+func cmdUpsertHabit() {
+	fs := flag.NewFlagSet("upsert-habit", flag.ExitOnError)
 	dateStr := fs.String("date", "", "date for the entry (e.g. \"Apr 19, 2026\" or \"2026-04-19\"), defaults to today")
 	steps := fs.Int("steps", 0, "step count")
 	weight := fs.Float64("weight", 0, "body weight")
