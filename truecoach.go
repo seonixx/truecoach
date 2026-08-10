@@ -252,8 +252,25 @@ type HabitTrackingUpdateInput struct {
 	Notes    *string  `json:"notes,omitempty"`
 }
 
-// UpdateHabitTracker updates the habit tracker entry for the given client and tracking ID.
-func (c *Client) UpdateHabitTracker(authToken string, clientID string, trackingID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
+// CreateHabitTracker creates a new habit tracker entry for the given client and date.
+func (c *Client) CreateHabitTracker(authToken string, clientID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
+	body := struct {
+		HabitTracking HabitTrackingUpdateInput `json:"habit_tracking"`
+	}{HabitTracking: input}
+	var out HabitTrackerTracking
+	res, err := c.httpClient.R().
+		SetHeader("Authorization", "Bearer "+authToken).
+		SetBody(body).
+		SetResult(&out).
+		Post("/clients/" + clientID + "/habit_trackers")
+	if err != nil {
+		return nil, err
+	}
+	return &out, checkStatus(res)
+}
+
+// updateHabitTracker updates an existing habit tracker entry by its tracking ID.
+func (c *Client) updateHabitTracker(authToken string, clientID string, trackingID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
 	body := struct {
 		HabitTracking HabitTrackingUpdateInput `json:"habit_tracking"`
 	}{HabitTracking: input}
@@ -266,8 +283,19 @@ func (c *Client) UpdateHabitTracker(authToken string, clientID string, trackingI
 	if err != nil {
 		return nil, err
 	}
-	if err := checkStatus(res); err != nil {
+	return &out, checkStatus(res)
+}
+
+// UpsertHabitTracker writes habit tracker values for the date in input.Date.
+// It creates a new entry if none exists for that day, or updates the existing one.
+func (c *Client) UpsertHabitTracker(authToken string, clientID string, input HabitTrackingUpdateInput) (*HabitTrackerTracking, error) {
+	habits, err := c.GetHabitTrackers(authToken, clientID, input.Date)
+	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	if len(habits.Trackings) == 0 {
+		return c.CreateHabitTracker(authToken, clientID, input)
+	}
+	trackingID := strconv.Itoa(habits.Trackings[0].ID)
+	return c.updateHabitTracker(authToken, clientID, trackingID, input)
 }

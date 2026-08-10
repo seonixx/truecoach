@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/seonixx/truecoach"
 )
@@ -206,16 +205,6 @@ func cmdUpdateHabit() {
 	cfg := loadConfig()
 	client := truecoach.NewClient()
 
-	// Fetch the tracking entry for the date to get its ID.
-	habits, err := client.GetHabitTrackers(cfg.Token, cfg.ClientID, date)
-	if err != nil {
-		fatalf("failed to fetch habit trackers: %v", err)
-	}
-	if len(habits.Trackings) == 0 {
-		fatalf("no tracking entry found for %s", date)
-	}
-	trackingID := strconv.Itoa(habits.Trackings[0].ID)
-
 	input := truecoach.HabitTrackingUpdateInput{Date: date}
 
 	// Only set fields that were explicitly provided.
@@ -246,9 +235,9 @@ func cmdUpdateHabit() {
 		}
 	})
 
-	result, err := client.UpdateHabitTracker(cfg.Token, cfg.ClientID, trackingID, input)
+	result, err := client.UpsertHabitTracker(cfg.Token, cfg.ClientID, input)
 	if err != nil {
-		fatalf("failed to update habit tracker: %v", err)
+		fatalf("failed to write habit tracker: %v", err)
 	}
 	printJSON(result)
 }
